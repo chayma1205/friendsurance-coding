@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Images API Gateway and Lambda functions
+
+Parameters:
+  S3CodingBucket:
+    Type: String
+    Default: upload-image-code
+  S3CodingKey:
+    Type: String
+    Default: package.zip
+  ApiName:
+    Type: String
+    Default: Images-api
+  RetrieveImagesLambdaName:
+    Type: String
+    Default: retrieve-Images
+  CreateImagesLambdaName:
+    Type: String
+    Default: create-Images
+  BucketName:
+    Type: String
+    Default: friendsurance-coding-challenge
+  DynamoDBTableName:
+    Type: String
+    Default: ImagesMetadata
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Description: Creating Amazon S3 bucket from CloudFormation
+    Properties:
+      BucketName: !Ref BucketName
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+            AllowedOrigins:
+              - '*'
+            Id: myCORSRuleId1
+            MaxAge: 3000
+      Tags:
+        - Key: "Name"
+          Value: !Ref BucketName
+        - Key: "Company"
+          Value: "friendsurance"
+
+  RetrieveImagesLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref RetrieveImagesLambdaName
+      Handler: index.handler
+      Runtime: python3.9
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import os
+          import json
+          import boto3
+
+
+          def handler(event, context):
+            
+            dynamodb = boto3.resource('dynamodb')
+            dynamodb_table = dynamodb.Table(os.environ['dynamodb'])
+  
+            ImagesList = []
+            s3_client = boto3.client('s3')
+            bucket_name = os.environ['bucket_name']
+            response = s3_client.list_objects_v2(Bucket=bucket_name)
+            Images = response.get("Contents")
+            if Images is not None:
+              for file in Images:
+                response = dynamodb_table.get_item(
+                  Key={'Name': file['Key']})
+                print(response['Item'])
+                ImagesList.append(response['Item'])
+              return {
+                "statusCode": 200,
+                 "body": json.dumps(ImagesList)
+                    
+            }
+            else :
+              return {
+                "statusCode": 200,
+                 "body": json.dumps("")
+                    
+            }
+
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          bucket_name: !Ref BucketName
+          dynamodb: !Ref DynamoDBTableName
+      Tags:
+        - Key: "Name"
+          Value: !Ref BucketName
+        - Key: "Company"
+          Value: "friendsurance"
+
+  CreateImagesLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref CreateImagesLambdaName
+      Handler: CreateImages.handler
+      Runtime: python3.9
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref S3CodingBucket
+        S3Key: !Ref S3CodingKey
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          bucket_name: !Ref BucketName
+          url: !Ref url
+          dynamodb: !Ref DynamoDBTableName
+      Tags:
+        - Key: "Name"
+          Value: !Ref BucketName
+        - Key: "Company"
+          Value: "friendsurance"
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: LambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource:
+                  - 'arn:aws:logs:*:*:*'
+                Effect: Allow
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - !Ref S3Policy
+        - !Ref DynamoDBPolicy
+      Tags:
+        - Key: "Name"
+          Value: !Ref BucketName
+        - Key: "Company"
+          Value: "friendsurance"
+
+  RestAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: Simple Images API
+      Name: !Ref ApiName
+      Tags:
+        - Key: "Name"
+          Value: !Ref BucketName
+        - Key: "Company"
+          Value: "friendsurance"
+
+  RestAPIDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: RetrieveImagesMethod
+    Properties:
+      RestApiId: !Ref RestAPI
+      StageName: v1
+
+
+  ImagesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt RestAPI.RootResourceId
+      PathPart: Images
+      RestApiId: !Ref RestAPI
+
+  RetrieveImagesMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - RetrieveImagesLambda
+      - ImagesResource
+    Properties:
+      AuthorizationType: AWS_IAM
+      HttpMethod: GET
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${RetrieveImagesLambdaName}/invocations
+          - RetrieveImagesLambdaName: !Ref RetrieveImagesLambdaName
+      ResourceId: !Ref ImagesResource
+      RestApiId: !Ref RestAPI
+
+  CreateImagesMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+      - CreateImagesLambda
+      - ImagesResource
+    Properties:
+      AuthorizationType: AWS_IAM
+      HttpMethod: POST
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${CreateImagesLambdaName}/invocations
+          - CreateImagesLambdaName: !Ref CreateImagesLambdaName
+      ResourceId: !Ref ImagesResource
+      RestApiId: !Ref RestAPI
+
+
+  ApiGatewayInvokePermissionForRetrieveImages:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt RetrieveImagesLambda.Arn
+      Principal: apigateway.amazonaws.com
+
+
+  ApiGatewayInvokePermissionForCreateImages:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CreateImagesLambda.Arn
+      Principal: apigateway.amazonaws.com
+
+
+  DynamoDBTableImagesMetadata:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: "Name"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "Name"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      TableName: !Ref DynamoDBTableName
+      Tags:
+        - Key: "Name"
+          Value: !Ref DynamoDBTableName
+        - Key: "Company"
+          Value: "friendsurance"
+
+  DynamoDBPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Path: /
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:List*
+              - dynamodb:DescribeReservedCapacity*
+              - dynamodb:DescribeLimits
+              - dynamodb:DescribeTimeToLive
+            Resource:
+              - "*"
+
+          - Effect: Allow
+            Action:
+              - dynamodb:DescribeTable
+              - dynamodb:GetItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:CreateTable
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:UpdateTable
+              - dynamodb:PutItem
+            Resource:
+              - !GetAtt DynamoDBTableImagesMetadata.Arn
+              - !GetAtt DynamoDBTableImagesMetadata.Arn
+
+
+  S3Policy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Path: /
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListObject
+              - s3:PutObject
+            Resource: !Sub
+              - ${S3BucketArn}/*
+              - S3BucketArn: !GetAtt S3Bucket.Arn
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !GetAtt S3Bucket.Arn
