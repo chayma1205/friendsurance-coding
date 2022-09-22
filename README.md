@@ -18,3 +18,8 @@ Create Cloudformation Stack by running this cmd
 ```bash
 aws cloudformation create-stack --template-body file://templates/images.yaml --stack-name images --capabilities CAPABILITY_IAM
 ```
+
+if you used a different bucket name for the coding , use thbis cmd and change the 'BucketName' value
+```bash
+aws cloudformation create-stack --template-body file://templates/images.yaml --stack-name images --capabilities CAPABILITY_IAM --parameters ParameterKey=S3CodingBucket,ParameterValue=BucketName
+```

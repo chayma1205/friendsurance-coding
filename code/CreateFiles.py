@@ -21,7 +21,7 @@ def handler(event, context):
     s3_client.Bucket(bucket_name).put_object(Key=filename, Body=img)
     add_metadata(dynamodb_table, filename, path, url, time_stamp)
 
-    return {'statusCode': 200, 'body': json.dumps('file is created in:')}
+    return {'statusCode': 200, 'body': json.dumps('image added')}
 
 
 def get_filename(url):
